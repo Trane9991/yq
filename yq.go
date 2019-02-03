@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kylelemons/godebug/pretty"
 	errors "github.com/pkg/errors"
-
 	yaml "gopkg.in/mikefarah/yaml.v2"
 	logging "gopkg.in/op/go-logging.v1"
 	cobra "gopkg.in/spf13/cobra.v0"
@@ -77,6 +77,7 @@ func newCommandCLI() *cobra.Command {
 		createDeleteCmd(),
 		createNewCmd(),
 		createMergeCmd(),
+		createDiffCmd(),
 	)
 	rootCmd.SetOutput(os.Stdout)
 
@@ -231,6 +232,22 @@ Note that if you set both flags only overwrite will take effect.
 	cmdMerge.PersistentFlags().BoolVarP(&appendFlag, "append", "a", false, "update the yaml file by appending array values")
 	cmdMerge.PersistentFlags().StringVarP(&docIndex, "doc", "d", "0", "process document index number (0 based, * for all documents)")
 	return cmdMerge
+}
+
+func createDiffCmd() *cobra.Command {
+	var cmdDiff = &cobra.Command{
+		Use:     "diff [yaml_file1] [yaml_file2]",
+		Aliases: []string{"df"},
+		Short:   "yq df file1.yaml file2.yaml",
+		Example: `
+yq diff file1.yaml file2.yaml
+yq df - file.yaml (reads from stdin)
+      `,
+		Long: "Outputs the diff of two yaml files to STDOUT",
+		RunE: diffFiles,
+	}
+
+	return cmdDiff
 }
 
 func readProperty(cmd *cobra.Command, args []string) error {
@@ -559,6 +576,49 @@ func readWriteCommands(args []string, expectedArgs int, badArgsMessage string) (
 		writeCommands[0] = yaml.MapItem{Key: args[expectedArgs-2], Value: parseValue(args[expectedArgs-1])}
 	}
 	return writeCommands, nil
+}
+
+// inspired by https://github.com/sahilm/yamldiff
+func diffFiles(cmd *cobra.Command, args []string) error {
+	var file1, file2 yaml.MapSlice
+	var f1, f2 string
+
+	switch l := len(args); {
+	case l < 2:
+		return errors.New("Not enough arguments")
+	case l == 2:
+		f1, f2 = args[0], args[1]
+	case l > 2:
+		return errors.New("Too many arguments")
+	}
+
+	if err := readData(f1, 0, &file1); err != nil {
+		return err
+	}
+
+	if err := readData(f2, 0, &file2); err != nil {
+		return err
+	}
+
+	diffs := make([]string, 0)
+	for _, s := range strings.Split(pretty.Compare(file1, file2), "\n") {
+		switch {
+		case strings.HasPrefix(s, "+"):
+			diffs = append(diffs, s)
+		case strings.HasPrefix(s, "-"):
+			diffs = append(diffs, s)
+		}
+	}
+
+	diff := strings.Join(diffs, "\n")
+
+	fmt.Println(diff)
+
+	if len(diff) > 0 {
+		// return non 0 exitcode
+	}
+
+	return nil
 }
 
 func parseValue(argument string) interface{} {
